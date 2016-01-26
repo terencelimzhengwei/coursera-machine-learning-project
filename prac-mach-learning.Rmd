@@ -1,0 +1,117 @@
+---
+title: "Practical Machine Learning Project for Weight Lifting Exercise Dataset"
+author: "Terence Lim Zheng Wei"
+date: "26 January 2016"
+output: 
+  html_document
+---
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Load Dataset
+
+This section downloads the dataset and stores them into two dataframes, training and testing.
+
+```{r echo=TRUE,warning=FALSE,message=FALSE}
+library(caret)
+library(ggplot2)
+library(dplyr)
+set.seed(333)
+
+filenames <- c("pml-training.csv","pml-testing.csv")
+
+if(sum(list.files() %in% filenames)==0){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/
+                  pml-training.csv","pml-training.csv")
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/
+                  pml-testing.csv","pml-testing.csv")
+}
+
+training <- tbl_df(read.csv("pml-training.csv",header=TRUE,na.strings=c("NA","")))
+testing <- tbl_df(read.csv("pml-testing.csv",header=TRUE,na.strings=c("NA","")))
+names(training)
+```
+
+We will be using the data available to predict the classe variable.
+
+##Pre-process data
+
+Remove first 7 columns of data as they do not assist in predicting classe based on physical movements
+
+```{r, echo=TRUE}
+training<-training[,-c(1:7)]
+testing<-testing[,-c(1:7)]
+```
+
+Remove columns which have greater than 80% of N.A values
+
+```{r, echo=TRUE}
+num_na <- colSums(is.na(training))
+low_na_col <- num_na < 0.8 * nrow(training)
+training <- training[,low_na_col]
+testing <- testing[,low_na_col]
+```
+
+Check whether there are columns with near zero variance as they do not assist in prediction
+
+```{r, echo=TRUE}
+nsv <- nearZeroVar(training,saveMetrics = TRUE)
+nsv
+```
+
+## Prediction
+
+Split the dataset into the training set and cross validation set.
+
+```{r, echo=TRUE}
+inTrain <- createDataPartition(training$classe,p=0.6,list=FALSE)
+train_data <- training[inTrain,]
+cv_data <- training[-inTrain,]
+```
+
+Set the training controls to use 3 fold cross validation
+```{r echo=TRUE}
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+```
+
+Use a CART Model for prediction. This model results in low accuracy and thus we will use random forests to see whether it improves performance.
+```{r, echo=TRUE,cache=TRUE}
+tree_fit <- train(classe~.,method="rpart",data=train_data,
+                  trControl = fitControl)
+tree_pred <- predict(tree_fit,cv_data)
+confusionMatrix(tree_pred,cv_data$classe)$overall
+```
+
+Use a Random Forest Model for prediction. This model achieves high accuracy when predicted against the cross validation set. We will use this model to predict against the testing dataset.
+```{r, echo=TRUE,cache=TRUE,message=FALSE}
+tree_fit <- train(classe~.,method="rf",data=train_data,
+                  trControl = fitControl, allowParallel=TRUE)
+tree_pred <- predict(tree_fit,cv_data)
+confusionMatrix(tree_pred,cv_data$classe)$overall
+```
+
+Using the random forest model against the cross validation set, the out of sample error is ```r 1-confusionMatrix(tree_pred,cv_data$classe)$overall[1]```
+
+## Variable Importance
+```{r, echo=TRUE,cache=TRUE,message=FALSE}
+ggplot(varImp(tree_fit),aes(y=importance))+geom_bar(stat="identity")
+```
+
+From this we can see the relative importance of variable used in deriving the model. For computational sake, this can be used for dimensionality reduction to decide which variables to use in the model.
+
+## Prediction on Test Set
+```{r, echo=TRUE,cache=TRUE,message=FALSE}
+test_pred <- predict(tree_fit,testing[,-53])
+test_pred
+```
+
